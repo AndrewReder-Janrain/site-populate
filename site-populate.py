@@ -41,12 +41,14 @@ def calculate_last_user_events(user_list):
 	for user in user_list:
 		if user['lastUpdated'] > user['created']:
 			user['trueDate'] = user['lastUpdated']
+			user['lastEvent'] = 'entity_update'
 		else:
 			user['trueDate'] = user['created']
+			user['lastEvent'] = 'entity_create'
 	return user_list
 
-def build_s3_url(date_string):
-	temp_date = dateutil.parser.parse(date_string)
+def build_s3_url(user_object):
+	temp_date = dateutil.parser.parse(user_object['trueDate'])
 
 	date_string_array = [
 		str(temp_date.year),
@@ -56,9 +58,8 @@ def build_s3_url(date_string):
 		'00',
 		'00'
 	]
-
 	url_string = (
-		'capture/entity_create/' 
+		'capture/' + user_object['lastEvent'] + '/'
 		+ reduce(lambda x,y: x + '/' + y, date_string_array) 
 		+ '/fdyc2rm7kvqcnftgyjzsrbawer/'
 	)
@@ -81,7 +82,7 @@ def main():
 	
 	user_list = yaml.load(get_users_with_null_sites())
 	calculate_last_user_events(user_list)
-	s3_url = build_s3_url(user_list[1]['trueDate'])
+	s3_url = build_s3_url(user_list[1])
 	s3_results = get_s3_analytics(s3_url)
 	print s3_results[0]['application_id']
 	
