@@ -78,14 +78,22 @@ def get_s3_analytics(s3_url):
 	
 	return s3_key_array
 
+def find_s3_event(s3_result_set, user):
+	return
+
 def main():
-	
 	user_list = yaml.load(get_users_with_null_sites())
 	calculate_last_user_events(user_list)
-	s3_url = build_s3_url(user_list[1])
-	s3_results = get_s3_analytics(s3_url)
-	print s3_results[0]['application_id']
 	
+	for i in range(10):	
+		s3_url = build_s3_url(user_list[i])
+		s3_results = get_s3_analytics(s3_url)
+		log_string = str(i) + ": "
+		try:
+			log_string += s3_results[0]['application_id']
+		except:
+			log_string += "No results for: " + user_list[i]['trueDate']
+		print log_string
 	return
 
 if __name__ == "__main__":
