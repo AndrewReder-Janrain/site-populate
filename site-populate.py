@@ -48,33 +48,77 @@ def calculate_last_user_events(user_list):
 	return user_list
 
 def build_s3_url(user_object):
+	
 	temp_date = dateutil.parser.parse(user_object['trueDate'])
-
-	date_string_array = [
-		str(temp_date.year),
-		str(temp_date.month),
-		str(temp_date.day),
-		str(temp_date.hour),
-		'00',
-		'00'
+	later_date = temp_date + datetime.timedelta(hours=1)
+	earlier_date = temp_date + datetime.timedelta(hours=-1)
+	date_array = [
+		temp_date,
+		later_date,
+		earlier_date
 	]
-	url_string = (
-		'capture/' + user_object['lastEvent'] + '/'
-		+ reduce(lambda x,y: x + '/' + y, date_string_array) 
-		+ '/fdyc2rm7kvqcnftgyjzsrbawer/'
-	)
+	url_string_array = []
+	for date in date_array:	
+		date_string_array = [
+			str(date.year),
+			str(date.month),
+			str(date.day),
+			str(date.hour),
+			'00',
+			'00'
+		]
+		# url_string = (
+		# 	'capture/' + user_object['lastEvent'] + '/'
+		# 	+ reduce(lambda x,y: x + '/' + y, date_string_array) 
+		# 	+ '/fdyc2rm7kvqcnftgyjzsrbawer/'
+		# )
 
-	return url_string
+		url_string = (
+			'capture/' + 'entity_create' + '/'
+			+ reduce(lambda x,y: x + '/' + y, date_string_array) 
+			+ '/fdyc2rm7kvqcnftgyjzsrbawer/'
+		)
+		url_string_array.append(url_string)
+		url_string = (
+			'capture/' + 'entity_update' + '/'
+			+ reduce(lambda x,y: x + '/' + y, date_string_array) 
+			+ '/fdyc2rm7kvqcnftgyjzsrbawer/'
+		)
+		url_string_array.append(url_string)
+	return url_string_array
 
 def get_s3_analytics(s3_url):
+	print "URL: " + s3_url
 	s3_key_array = [];
 	s3 = boto.s3.connect_to_region('us-east-1')
 	s3_bucket = s3.get_bucket('janrain.analytics')
-
+	# print s3_bucket.get_all_keys(prefix=s3_url)
 	for item in s3_bucket.list(prefix=s3_url):
+		object_array = []
 		temp_string = item.get_contents_as_string()
-		temp_string = temp_string[temp_string.find('{'):-1]
-		s3_key_array.append(yaml.load(temp_string))
+		num_objects = temp_string.count('\n')
+		print num_objects
+		for j in range(num_objects):
+			print temp_string.find('{')
+			print temp_string.find('\n')
+			# print temp_string[temp_string.find('{'):temp_string.find('\n')]
+			if temp_string.find('\n') > -1:
+				s3_key_array.append(yaml.load(temp_string[temp_string.find('{'):temp_string.find('\n')]))
+				temp_string = temp_string[temp_string.find('\n')+1:-1]
+			else:
+				print temp_string
+				s3_key_array.append(yaml.load(temp_string[temp_string.find('{'):-1]))
+			
+			
+
+
+		# try:
+		# 	s3_key_array.append(yaml.load(temp_string))
+		# except:
+		# 	# temp_string = temp_string[temp_string.find('{'):-1]
+		# 	print s3_url
+		# 	print item
+		# 	# s3_key_array.append(yaml.load(temp_string))
 	
 	return s3_key_array
 
@@ -85,15 +129,16 @@ def main():
 	user_list = yaml.load(get_users_with_null_sites())
 	calculate_last_user_events(user_list)
 	
-	for i in range(10):	
-		s3_url = build_s3_url(user_list[i])
-		s3_results = get_s3_analytics(s3_url)
-		log_string = str(i) + ": "
-		try:
-			log_string += s3_results[0]['application_id']
-		except:
-			log_string += "No results for: " + user_list[i]['trueDate']
-		print log_string
+	for i in range(3):	
+		s3_url_array = build_s3_url(user_list[i])
+		for s3_url in s3_url_array:
+			s3_results = get_s3_analytics(s3_url)
+			log_string = str(i) + ": "
+			try:
+				log_string += s3_results[0]['application_id']
+			except:
+				log_string += "No results for: " + user_list[i]['trueDate']
+			print log_string
 	return
 
 if __name__ == "__main__":
