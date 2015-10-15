@@ -88,7 +88,7 @@ def build_s3_url(user_object):
 	return url_string_array
 
 def get_s3_analytics(s3_url):
-	print "URL: " + s3_url
+	#print "URL: " + s3_url
 	s3_key_array = [];
 	s3 = boto.s3.connect_to_region('us-east-1')
 	s3_bucket = s3.get_bucket('janrain.analytics')
@@ -97,17 +97,20 @@ def get_s3_analytics(s3_url):
 		object_array = []
 		temp_string = item.get_contents_as_string()
 		num_objects = temp_string.count('\n')
-		print num_objects
 		for j in range(num_objects):
-			print temp_string.find('{')
-			print temp_string.find('\n')
+			# print temp_string.find('{')
+			# print temp_string.find('\n')
 			# print temp_string[temp_string.find('{'):temp_string.find('\n')]
 			if temp_string.find('\n') > -1:
 				s3_key_array.append(yaml.load(temp_string[temp_string.find('{'):temp_string.find('\n')]))
 				temp_string = temp_string[temp_string.find('\n')+1:-1]
-			else:
-				print temp_string
-				s3_key_array.append(yaml.load(temp_string[temp_string.find('{'):-1]))
+			# else:
+			# 	# print temp_string
+			# 	try:
+			# 		s3_key_array.append(yaml.load(temp_string[temp_string.find('{'):-1]))
+			# 	except:
+			# 		print "Wah Wah: " + item.name
+			# 		s3_key_array.append(yaml.load(temp_string[temp_string.find('{'):temp_string.rfind("}")]))
 			
 			
 
@@ -119,26 +122,31 @@ def get_s3_analytics(s3_url):
 		# 	print s3_url
 		# 	print item
 		# 	# s3_key_array.append(yaml.load(temp_string))
-	
+	# print s3_key_array
 	return s3_key_array
 
 def find_s3_event(s3_result_set, user):
 	return
 
 def main():
+	json_file = open('test_data.json','w')
 	user_list = yaml.load(get_users_with_null_sites())
 	calculate_last_user_events(user_list)
-	
-	for i in range(3):	
+	s3_results = []
+	for i in range(2):	
 		s3_url_array = build_s3_url(user_list[i])
 		for s3_url in s3_url_array:
-			s3_results = get_s3_analytics(s3_url)
-			log_string = str(i) + ": "
-			try:
-				log_string += s3_results[0]['application_id']
-			except:
-				log_string += "No results for: " + user_list[i]['trueDate']
-			print log_string
+			s3_results += get_s3_analytics(s3_url)
+		log_string = str(i) + ": "
+		try:
+			log_string += s3_results[0]['application_id']
+		except:
+			log_string += "No results for: " + user_list[i]['trueDate']
+		print log_string
+	json_string = '[' + ','.join(json.dumps(result) for result in s3_results) + ']'
+	json_file.write(json_string)
+	json_file.close()
+	# print len(s3_results)
 	return
 
 if __name__ == "__main__":
