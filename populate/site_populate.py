@@ -6,13 +6,15 @@ import yaml
 import dateutil.parser
 import datetime
 import boto
+from multiprocessing import Lock, Process, Queue, current_process
 
 backup_file = open('backup_user_data.txt','w')
 json_file = open('test_data.txt','w')
+users_file = open('target_users.json','w')
 result_count = 0
 
 # Makes an apid-cli call to get 10 users with null sites
-def get_users_with_null_sites():
+def get_users_with_null_sites(num_users):
 	global backup_file
 
 	apid_array = [
@@ -22,11 +24,13 @@ def get_users_with_null_sites():
 		"-c",
 		"cnhi",
 		"--filter",
-		"sites.siteName is null and created>'2014-10-10'",
+		"sites.siteName is null",
 		"--attributes",
-		'["created","lastUpdated","uuid","sites","lastLogin"]',
+		'["created","lastUpdated","uuid","sites","lastLogin","id"]',
+		"--sort-on",
+		'["id"]',
 		"--max-results",
-		"10000"	
+		str(num_users)	
 	]
 
 	jq_array = [
@@ -88,13 +92,13 @@ def build_s3_url(user_object):
 				+ reduce(lambda x,y: x + '/' + y, date_string_array) 
 				+ '/fdyc2rm7kvqcnftgyjzsrbawer/'
 			)
-			s3_results += get_s3_keys(url_string,date,user_object)
-
-	return s3_results
+			url_string_array.append(url_string)
+			
+	return url_string_array
 
 # This is pretty messy
 # For each s3 url, goes and checks the analytics
-def get_s3_keys(s3_url,date,user_object):
+def get_s3_keys(s3_url,user_object):
 	global json_file
 	global result_count
 
@@ -104,15 +108,11 @@ def get_s3_keys(s3_url,date,user_object):
 	s3 = boto.s3.connect_to_region('us-east-1')
 	s3_bucket = s3.get_bucket('janrain.analytics')
 	# json_file.write('\t'+json.dumps(s3_url)+'\n')
-	print s3_url
+	# print s3_url
 	for item in s3_bucket.list(prefix=s3_url):
 		object_array = []
 		item_time = dateutil.parser.parse(item.name[-28:-9] + ' +0000')
-		# json_file.write('\t\tUser time: '+str(date)+'\tItem time: '+str(item_time)+'\n')
-		
-		# Checks whether the date of the user event is close (15 min) to the analytics event time
-		# if abs((date - item_time).total_seconds()/60) < time_buffer:
-			# json_file.write('\t\tYes\n')
+
 		temp_string = item.get_contents_as_string()
 		num_objects = temp_string.count('\n')
 		for j in range(num_objects):
@@ -135,8 +135,6 @@ def get_s3_keys(s3_url,date,user_object):
 					
 				# json_file.write('\t\tUUID: '+result_object['value']['uuid']+'\tClient ID: '+result_object['client_id']+'\n')
 				temp_string = temp_string[temp_string.find('\n')+1:-1]
-
-	
 	return s3_key_array
 
 # Looks up what the site name should be based on the client_id
@@ -303,27 +301,86 @@ def build_update_object(s3_result_set):
 
 			if update_object != {}:
 				result_array.append(update_object)
+	
 	result_array = {repr(item): item for item in result_array}.values()
-	for result in result_array:
-		json_file.write(str(result)+'\n')
 	# return result_array
-	return
+	return result_array
 
-# Just does the stuff
-def main():
+# master function to pass into multithreads
+def find_user_events(user):
 	global json_file
 
-	user_list = yaml.load(get_users_with_null_sites())
-	calculate_last_user_events(user_list)
+	url_string_array = build_s3_url(user)
+	s3_results = []
+	for url in url_string_array:
+		s3_results += get_s3_keys(url,user)
+	update_array = build_update_object(s3_results)
+	# for update in update_array:
+	# 	json_file.write(str(update)+'\n')
+
+	return update_array
+
+# Just does the stuff
+
+def worker(work_queue, done_queue):
+    global json_file
+    try:
+        for user in iter(work_queue.get, 'STOP'):
+            user_response = find_user_events(user)
+            # done_queue.put("%s - %s got %s." % (current_process().name, user, user_response))
+            done_queue.put(user_response)
+            
+            # print str(current_process().name)+ str(user) + str(user_response)
+    except Exception, e:
+        done_queue.put("%s failed on %s with: %s" % (current_process().name, user, e.message))
+        # print str(current_process().name)+ str(user) + str(e.message)
+    return True
+
+def main():
+	# processes = [mp.Process(target=rand_string, args=(5, output)) for x in range(4)]
+
+	workers = 10
+	work_queue = Queue()
+	done_queue = Queue()
+	processes = []
+
+	global json_file
+
+	user_list = yaml.load(get_users_with_null_sites(1000))
+	user_list = calculate_last_user_events(user_list)
 
 	for user in user_list:	
-		temp_array=build_update_object(build_s3_url(user))
-		if temp_array != []:
-			s3_results=s3_results+temp_array
-	for result in s3_results:
-		json_file.write(str(result)+'\n')
-	json_file.close()
-	return
+		work_queue.put(user)
+
+	for w in xrange(workers):
+		p = Process(target=worker, args=(work_queue, done_queue))
+		p.start()
+		processes.append(p)
+		work_queue.put('STOP')
+
+	for p in processes:
+		p.join()
+
+	done_queue.put('STOP')
+
+	for user_response in iter(done_queue.get,'STOP'):
+		for response in user_response:
+			json_file.write(str(response)+'\n')
+    #     for response in user_response:
+				# json_file.write(str(response)+'\n')
+
+		# find_user_events(user)
+
+		# url_string_array = build_s3_url(user)
+		# s3_results = []
+		# for url in url_string_array:
+		# 	s3_results += get_s3_keys(url,user)
+		# update_array = build_update_object(s3_results)
+		# for update in update_array:
+		# 	json_file.write(str(update)+'\n')
+
+	# json_file.close()
+	# return
 
 if __name__ == "__main__":
     main()
